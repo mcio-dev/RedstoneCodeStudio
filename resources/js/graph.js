@@ -1,8 +1,3 @@
-/**
- * 初始化 LiteGraph 画布：注册节点、配置右键菜单、拖拽放置、自动代码生成
- * 依赖：constants.js, node-defs.js, codegen.js
- */
-
 function initLiteGraph() {
     if (typeof LiteGraph === 'undefined') { setTimeout(initLiteGraph, 100); return; }
 
@@ -33,7 +28,6 @@ function initLiteGraph() {
     lgc.background_image = null;
     lgc.clear_background_color = "#181b27";
 
-    // 中文分类名称映射（用于右键"添加节点"菜单）
     const CN_CATEGORY = {
         "events":  "<i class=\"fa-regular fa-calendar\"></i> 事件节点",
         "command": "<i class=\"fa-solid fa-terminal\"></i> 指令节点",
@@ -49,7 +43,6 @@ function initLiteGraph() {
         "convert": "<i class=\"fa-solid fa-shuffle\"></i> 类型转换",
     };
 
-    // 右键菜单
     function openAddNodeMenu(event, prev_menu) {
         const cats = {};
         for (const type of Object.keys(LiteGraph.registered_node_types)) {
@@ -79,7 +72,6 @@ function initLiteGraph() {
         new LiteGraph.ContextMenu(catItems, { event, parentMenu: prev_menu });
     }
 
-    // 画布空白区右键菜单
     lgc.getMenuOptions = function () {
         return [
             {
@@ -104,7 +96,6 @@ function initLiteGraph() {
         ];
     };
 
-    // 节点右键菜单
     lgc.getNodeMenuOptions = function (node) {
         return [
             { content: "克隆节点", callback: () => { const c = node.clone(); c.pos = [node.pos[0] + 30, node.pos[1] + 30]; graph.add(c); } },
@@ -115,13 +106,11 @@ function initLiteGraph() {
 
     graph.start();
 
-    // 节点变化时延迟重新生成代码
     const regen = () => setTimeout(regenerateAll, 80);
     graph.onNodeAdded        = regen;
     graph.onNodeRemoved      = regen;
     graph.onConnectionChange = regen;
 
-    // 拖拽放置节点到画布
     const blocklyDiv = document.getElementById('blocklyDiv');
     blocklyDiv.addEventListener('dragover', e => e.preventDefault());
     blocklyDiv.addEventListener('drop', e => {
@@ -141,7 +130,6 @@ function initLiteGraph() {
         });
     });
 
-    // 放置默认起始节点
     setTimeout(() => {
         const node = LiteGraph.createNode("events/onEnable");
         node.pos = [100, 140];

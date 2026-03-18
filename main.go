@@ -23,8 +23,23 @@ var (
 	MavenCommand string
 )
 
-// TempBuildDir 在 init() 中基于 ProgramDir 动态设置
 var TempBuildDir string
+
+type BuildRequest struct {
+	PluginName  string `json:"pluginName"`
+	PackageName string `json:"packageName"`
+	MainClass   string `json:"mainClass"`
+	FullMain    string `json:"fullMain"`
+	Version     string `json:"version"`
+	Author      string `json:"author"`
+	Website     string `json:"website"`
+	GroupId     string `json:"groupId"`
+	ArtifactId  string `json:"artifactId"`
+	JavaCode    string `json:"javaCode"`
+	PluginYaml  string `json:"pluginYml"`
+	ConfigYaml  string `json:"configYml"`
+	PomXml      string `json:"pomXml"`
+}
 
 func init() {
 	exePath, err := os.Executable()
@@ -72,22 +87,6 @@ func decodeGBK(s []byte) string {
 	return string(out)
 }
 
-type BuildRequest struct {
-	PluginName  string `json:"pluginName"`
-	PackageName string `json:"packageName"`
-	MainClass   string `json:"mainClass"`
-	FullMain    string `json:"fullMain"`
-	Version     string `json:"version"`
-	Author      string `json:"author"`
-	Website     string `json:"website"`
-	GroupId     string `json:"groupId"`
-	ArtifactId  string `json:"artifactId"`
-	JavaCode    string `json:"javaCode"`
-	PluginYaml  string `json:"pluginYml"`
-	ConfigYaml  string `json:"configYml"`
-	PomXml      string `json:"pomXml"`
-}
-
 func main() {
 	os.MkdirAll(TempBuildDir, 0755)
 
@@ -105,8 +104,6 @@ func main() {
 	}()
 
 	waitForServer(url)
-
-	// openUI 由各平台的实现文件提供
 	openUI(url)
 }
 
@@ -236,7 +233,6 @@ func buildHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 优先选择不含 sources/original 后缀的主 JAR
 	jarPath := jarFiles[0]
 	for _, f := range jarFiles {
 		base := filepath.Base(f)
@@ -256,7 +252,6 @@ func buildHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 发送完成后异步清理构建目录，释放磁盘空间
 	defer func() {
 		go func() {
 			if rmErr := os.RemoveAll(projectDir); rmErr != nil {
