@@ -1,8 +1,15 @@
 package main
 
 import (
+	"crypto/aes"
+	"crypto/cipher"
+	"crypto/hmac"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"net/http"
@@ -23,8 +30,127 @@ var (
 	MavenCommand string
 )
 
-// TempBuildDir 在 init() 中基于 ProgramDir 动态设置
 var TempBuildDir string
+
+// 持久化用户配置
+var SettingsFile string
+
+// AppSettings 应用持久化设置
+type AppSettings struct {
+	OnlineMode bool   `json:"onlineMode"`
+	SessionEnc string `json:"sessionEnc,omitempty"`
+	SessionIV  string `json:"sessionIv,omitempty"`
+}
+
+type StoredSession struct {
+	Token string          `json:"token"`
+	User  json.RawMessage `json:"user"`
+	Exp   int64           `json:"exp"`
+}
+
+const _srvSecret = "rcs-srv-session-key-v1"
+
+const (
+	_apiOrigin = "https://api.zeromi.cn"
+	_authPath  = "/api/market/auth"
+)
+
+var _trustedOrigins = []string{
+	_apiOrigin,
+}
+
+func buildProxyTargetURL(path string) (string, error) {
+	var targetURL string
+	switch {
+	case strings.HasPrefix(path, "http"):
+		targetURL = path
+	case strings.HasPrefix(path, "/"):
+		targetURL = _apiOrigin + path
+	default:
+		targetURL = _apiOrigin + _authPath + "/" + path
+	}
+
+	for _, origin := range _trustedOrigins {
+		if strings.HasPrefix(targetURL, origin) {
+			return targetURL, nil
+		}
+	}
+	return "", fmt.Errorf("目标域名不在白名单中: %s", targetURL)
+}
+
+type ProxyAuthRequest struct {
+	Path    string                 `json:"path"`
+	Payload map[string]interface{} `json:"payload"`
+}
+
+// 处理 POST /api/proxy/auth
+func proxyAuthHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	if r.Method != http.MethodPost {
+		http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req ProxyAuthRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, `{"error":"invalid request body"}`, http.StatusBadRequest)
+		return
+	}
+	if req.Path == "" {
+		http.Error(w, `{"error":"path is required"}`, http.StatusBadRequest)
+		return
+	}
+
+	targetURL, err := buildProxyTargetURL(req.Path)
+	if err != nil {
+		log.Printf("[proxy] 目标 URL 不受信任: %v", err)
+		http.Error(w, `{"error":"untrusted target domain"}`, http.StatusForbidden)
+		return
+	}
+
+	if req.Payload == nil {
+		req.Payload = make(map[string]interface{})
+	}
+	req.Payload["_ts"] = time.Now().UnixMilli()
+
+	body, err := json.Marshal(req.Payload)
+	if err != nil {
+		http.Error(w, `{"error":"marshal failed"}`, http.StatusInternalServerError)
+		return
+	}
+
+	proxyReq, err := http.NewRequest(http.MethodPost, targetURL, strings.NewReader(string(body)))
+	if err != nil {
+		http.Error(w, `{"error":"create upstream request failed"}`, http.StatusInternalServerError)
+		return
+	}
+	proxyReq.Header.Set("Content-Type", "application/json")
+
+	if auth := r.Header.Get("Authorization"); auth != "" {
+		proxyReq.Header.Set("Authorization", auth)
+	}
+	if xauth := r.Header.Get("X-Auth-Token"); xauth != "" {
+		proxyReq.Header.Set("X-Auth-Token", xauth)
+	}
+
+	client := &http.Client{Timeout: 15 * time.Second}
+	resp, err := client.Do(proxyReq)
+	if err != nil {
+		log.Printf("[proxy] 上游请求失败: %v", err)
+		http.Error(w, `{"error":"upstream request failed"}`, http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+
+	respBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		http.Error(w, `{"error":"read upstream response failed"}`, http.StatusBadGateway)
+		return
+	}
+	w.WriteHeader(resp.StatusCode)
+	w.Write(respBytes)
+}
 
 func init() {
 	exePath, err := os.Executable()
@@ -38,6 +164,7 @@ func init() {
 	log.Printf("使用 Maven 命令: %s", MavenCommand)
 
 	TempBuildDir = filepath.Join(ProgramDir, "builds")
+	SettingsFile = filepath.Join(ProgramDir, "settings.json")
 }
 
 func getMavenCommand() string {
@@ -73,19 +200,58 @@ func decodeGBK(s []byte) string {
 }
 
 type BuildRequest struct {
-	PluginName  string `json:"pluginName"`
-	PackageName string `json:"packageName"`
-	MainClass   string `json:"mainClass"`
-	FullMain    string `json:"fullMain"`
-	Version     string `json:"version"`
-	Author      string `json:"author"`
-	Website     string `json:"website"`
-	GroupId     string `json:"groupId"`
-	ArtifactId  string `json:"artifactId"`
-	JavaCode    string `json:"javaCode"`
-	PluginYaml  string `json:"pluginYml"`
-	ConfigYaml  string `json:"configYml"`
-	PomXml      string `json:"pomXml"`
+	PluginName    string `json:"pluginName"`
+	PackageName   string `json:"packageName"`
+	MainClass     string `json:"mainClass"`
+	FullMain      string `json:"fullMain"`
+	Version       string `json:"version"`
+	Author        string `json:"author"`
+	Website       string `json:"website"`
+	GroupId       string `json:"groupId"`
+	ArtifactId    string `json:"artifactId"`
+	ApiVersion    string `json:"apiVersion"`    // e.g. "1.21"
+	SpigotVersion string `json:"spigotVersion"` // e.g. "1.21.4-R0.1-SNAPSHOT"
+	JavaVersion   string `json:"javaVersion"`   // e.g. "21"
+	JavaCode      string `json:"javaCode"`
+	PluginYaml    string `json:"pluginYml"`
+	ConfigYaml    string `json:"configYml"`
+	PomXml        string `json:"pomXml"`
+}
+
+func configHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	json.NewEncoder(w).Encode(map[string]string{
+		"apiOrigin": _apiOrigin,
+	})
+}
+
+func remotePassthroughHandler(remotePath string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+
+		client := &http.Client{Timeout: 8 * time.Second}
+		targetURL := _apiOrigin + remotePath
+
+		resp, err := client.Get(targetURL)
+		if err != nil {
+			// 网络不通时返回空对象，前端静默忽略
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte("{}"))
+			return
+		}
+		defer resp.Body.Close()
+
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte("{}"))
+			return
+		}
+		w.WriteHeader(resp.StatusCode)
+		w.Write(body)
+	}
 }
 
 func main() {
@@ -97,6 +263,12 @@ func main() {
 
 	http.Handle("/", http.FileServer(http.Dir(filepath.Join(ProgramDir, "resources"))))
 	http.HandleFunc("/api/build", buildHandler)
+	http.HandleFunc("/api/config", configHandler)
+	http.HandleFunc("/api/settings", settingsHandler)
+	http.HandleFunc("/api/session", sessionHandler)
+	http.HandleFunc("/api/proxy/auth", proxyAuthHandler)
+	http.HandleFunc("/api/update", remotePassthroughHandler("/api/update.php"))
+	http.HandleFunc("/api/announce", remotePassthroughHandler("/api/announce.php"))
 
 	go func() {
 		if err := http.ListenAndServe(addr, nil); err != nil {
@@ -106,7 +278,6 @@ func main() {
 
 	waitForServer(url)
 
-	// openUI 由各平台的实现文件提供
 	openUI(url)
 }
 
@@ -128,6 +299,186 @@ func waitForServer(url string) {
 			return
 		}
 		time.Sleep(100 * time.Millisecond)
+	}
+}
+
+func deriveMachineKey() []byte {
+	hostname, _ := os.Hostname()
+	mac := hmac.New(sha256.New, []byte(_srvSecret))
+	mac.Write([]byte("machine-session-key:"))
+	mac.Write([]byte(hostname))
+	return mac.Sum(nil)
+}
+func encryptSession(plaintext []byte) (ivB64, cipherB64 string, err error) {
+	block, err := aes.NewCipher(deriveMachineKey())
+	if err != nil {
+		return "", "", fmt.Errorf("创建 AES 块失败: %w", err)
+	}
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return "", "", fmt.Errorf("创建 GCM 失败: %w", err)
+	}
+	iv := make([]byte, gcm.NonceSize())
+	if _, err = io.ReadFull(rand.Reader, iv); err != nil {
+		return "", "", fmt.Errorf("生成 IV 失败: %w", err)
+	}
+	ciphertext := gcm.Seal(nil, iv, plaintext, nil)
+	return base64.StdEncoding.EncodeToString(iv),
+		base64.StdEncoding.EncodeToString(ciphertext), nil
+}
+func decryptSession(ivB64, cipherB64 string) ([]byte, error) {
+	iv, err := base64.StdEncoding.DecodeString(ivB64)
+	if err != nil {
+		return nil, fmt.Errorf("IV 解码失败: %w", err)
+	}
+	ciphertext, err := base64.StdEncoding.DecodeString(cipherB64)
+	if err != nil {
+		return nil, fmt.Errorf("密文解码失败: %w", err)
+	}
+	block, err := aes.NewCipher(deriveMachineKey())
+	if err != nil {
+		return nil, err
+	}
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return nil, err
+	}
+	return gcm.Open(nil, iv, ciphertext, nil)
+}
+func sessionHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	switch r.Method {
+
+	case http.MethodGet:
+		s := loadSettings()
+		if s.SessionEnc == "" || s.SessionIV == "" {
+			http.Error(w, `{"error":"no session"}`, http.StatusNotFound)
+			return
+		}
+		plain, err := decryptSession(s.SessionIV, s.SessionEnc)
+		if err != nil {
+			log.Printf("会话解密失败（可能是换了电脑或文件损坏）: %v", err)
+			s.SessionEnc = ""
+			s.SessionIV = ""
+			saveSettings(s)
+			http.Error(w, `{"error":"decrypt failed"}`, http.StatusNotFound)
+			return
+		}
+		var sess StoredSession
+		if err := json.Unmarshal(plain, &sess); err != nil {
+			http.Error(w, `{"error":"invalid session data"}`, http.StatusNotFound)
+			return
+		}
+		if sess.Exp > 0 && time.Now().UnixMilli() > sess.Exp {
+			log.Printf("会话已过期，清除存储")
+			s.SessionEnc = ""
+			s.SessionIV = ""
+			saveSettings(s)
+			http.Error(w, `{"error":"session expired"}`, http.StatusNotFound)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"token": sess.Token,
+			"user":  sess.User,
+			"exp":   sess.Exp,
+		})
+
+	case http.MethodPost:
+		var sess StoredSession
+		if err := json.NewDecoder(r.Body).Decode(&sess); err != nil {
+			http.Error(w, `{"error":"invalid json"}`, http.StatusBadRequest)
+			return
+		}
+		if sess.Token == "" {
+			http.Error(w, `{"error":"token is required"}`, http.StatusBadRequest)
+			return
+		}
+		plain, err := json.Marshal(sess)
+		if err != nil {
+			http.Error(w, `{"error":"marshal failed"}`, http.StatusInternalServerError)
+			return
+		}
+		ivB64, encB64, err := encryptSession(plain)
+		if err != nil {
+			log.Printf("会话加密失败: %v", err)
+			http.Error(w, `{"error":"encrypt failed"}`, http.StatusInternalServerError)
+			return
+		}
+		s := loadSettings()
+		s.SessionEnc = encB64
+		s.SessionIV = ivB64
+		if err := saveSettings(s); err != nil {
+			log.Printf("会话保存失败: %v", err)
+			http.Error(w, `{"error":"save failed"}`, http.StatusInternalServerError)
+			return
+		}
+		log.Printf("会话已加密保存（TTL 至 %s）", time.UnixMilli(sess.Exp).Format(time.RFC3339))
+		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+
+	case http.MethodDelete:
+		s := loadSettings()
+		s.SessionEnc = ""
+		s.SessionIV = ""
+		if err := saveSettings(s); err != nil {
+			log.Printf("清除会话失败: %v", err)
+			http.Error(w, `{"error":"clear failed"}`, http.StatusInternalServerError)
+			return
+		}
+		log.Printf("会话已清除")
+		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+
+	default:
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+func loadSettings() AppSettings {
+	data, err := os.ReadFile(SettingsFile)
+	if err != nil {
+		return AppSettings{OnlineMode: false}
+	}
+	var s AppSettings
+	if err := json.Unmarshal(data, &s); err != nil {
+		return AppSettings{OnlineMode: false}
+	}
+	return s
+}
+
+func saveSettings(s AppSettings) error {
+	data, err := json.MarshalIndent(s, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(SettingsFile, data, 0600)
+}
+
+func settingsHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+
+	switch r.Method {
+	case http.MethodGet:
+		s := loadSettings()
+		json.NewEncoder(w).Encode(s)
+
+	case http.MethodPost:
+		var s AppSettings
+		if err := json.NewDecoder(r.Body).Decode(&s); err != nil {
+			http.Error(w, `{"error":"invalid json"}`, http.StatusBadRequest)
+			return
+		}
+		if err := saveSettings(s); err != nil {
+			log.Printf("保存设置失败: %v", err)
+			http.Error(w, `{"error":"save failed"}`, http.StatusInternalServerError)
+			return
+		}
+		log.Printf("设置已保存: onlineMode=%v", s.OnlineMode)
+		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+
+	default:
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 	}
 }
 
@@ -236,7 +587,6 @@ func buildHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 优先选择不含 sources/original 后缀的主 JAR
 	jarPath := jarFiles[0]
 	for _, f := range jarFiles {
 		base := filepath.Base(f)
@@ -256,7 +606,6 @@ func buildHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 发送完成后异步清理构建目录，释放磁盘空间
 	defer func() {
 		go func() {
 			if rmErr := os.RemoveAll(projectDir); rmErr != nil {
@@ -282,6 +631,14 @@ func getPom(req BuildRequest) string {
 	if artifactId == "" {
 		artifactId = strings.ToLower(req.PluginName)
 	}
+	spigotVer := req.SpigotVersion
+	if spigotVer == "" {
+		spigotVer = "1.21.4-R0.1-SNAPSHOT"
+	}
+	javaVer := req.JavaVersion
+	if javaVer == "" {
+		javaVer = "21"
+	}
 	return `<?xml version="1.0" encoding="UTF-8"?>
 <project xmlns="http://maven.apache.org/POM/4.0.0"
          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
@@ -291,15 +648,15 @@ func getPom(req BuildRequest) string {
     <artifactId>` + artifactId + `</artifactId>
     <version>` + req.Version + `</version>
     <properties>
-        <maven.compiler.source>17</maven.compiler.source>
-        <maven.compiler.target>17</maven.compiler.target>
+        <maven.compiler.source>` + javaVer + `</maven.compiler.source>
+        <maven.compiler.target>` + javaVer + `</maven.compiler.target>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     </properties>
     <dependencies>
         <dependency>
             <groupId>org.spigotmc</groupId>
             <artifactId>spigot-api</artifactId>
-            <version>1.20.1-R0.1-SNAPSHOT</version>
+            <version>` + spigotVer + `</version>
             <scope>provided</scope>
         </dependency>
     </dependencies>
@@ -330,12 +687,16 @@ func getPom(req BuildRequest) string {
 }
 
 func getPluginYml(req BuildRequest) string {
+	apiVer := req.ApiVersion
+	if apiVer == "" {
+		apiVer = "1.21"
+	}
 	return `name: ` + req.PluginName + `
 version: ` + req.Version + `
 main: ` + req.PackageName + `.` + req.MainClass + `
 author: ` + req.Author + `
 website: ` + req.Website + `
-api-version: 1.20`
+api-version: ` + apiVer
 }
 
 func writeFile(path, content string) {

@@ -1,9 +1,3 @@
-/**
- * 节点图 → Java / plugin.yml / config.yml / pom.xml 代码生成
- * 依赖：constants.js (litegraphGraph, editors, configEntries, registeredCommands)
- *       form.js (getMainClassParts)
- */
-
 // 节点链接辅助
 
 function getLinkedSourceNode(node, inputName) {
@@ -51,7 +45,6 @@ function resolveString(node, inputName, fallback) {
             ? resolvePlayerInput(src, "玩家名") + ".getName()"
             : "player.getName()";
         const tpl = (src.properties.template || "");
-        // 将模板按 {player} 切分后重新拼接为 Java 字符串连接表达式
         const parts = tpl.split("{player}");
         if (parts.length === 1) return JSON.stringify(tpl);
         return parts.map(p => JSON.stringify(p)).join(' + ' + playerExpr + ' + ');
@@ -128,7 +121,6 @@ function resolveString(node, inputName, fallback) {
         return `${resolvePlayer(plrSrc)}.getName()`;
     }
 
-    // 玩家数据节点 → 字符串
     if (src.type === "player/getItemInHand") {
         return `${resolvePlayerInput(src, "玩家")}.getInventory().getItemInMainHand().getType().name()`;
     }
@@ -139,7 +131,6 @@ function resolveString(node, inputName, fallback) {
         const v1 = resolveString(src, "值1", '"val1"');
         const k2 = resolveString(src, "键2", '"key2"');
         const v2 = resolveString(src, "值2", '"val2"');
-        // 手动拼接 JSON，避免引入额外序列化依赖
         return `("{\"" + ${k1} + "\":\"" + ${v1} + "\",\"" + ${k2} + "\":\"" + ${v2} + "\"}")`;
     }
 

@@ -1,8 +1,3 @@
-/**
- * 配置项列表的增删改与 DOM 渲染
- * 依赖：constants.js (configEntries), codegen.js (regenerateAll)
- */
-
 // 添加一条新的配置项并刷新 UI
 function addConfigEntry() {
     configEntries.push({ key: "settings.new-key", value: "defaultValue" });

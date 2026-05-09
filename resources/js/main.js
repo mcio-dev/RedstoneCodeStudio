@@ -1,9 +1,6 @@
-/**
- * 应用入口：DOM 加载完毕后初始化 Ace 编辑器、配置项、表单默认值，并启动 LiteGraph
- * 依赖：所有其他模块
- */
-
 document.addEventListener('DOMContentLoaded', function () {
+
+    if (typeof initOnlineMode === 'function') initOnlineMode();
 
     //  Ace 编辑器初始化 
 
@@ -46,4 +43,9 @@ document.addEventListener('DOMContentLoaded', function () {
         else setTimeout(waitLG, 100);
     }
     waitLG();
+
+    setTimeout(() => {
+        if (typeof initUpdateCheck === 'function') initUpdateCheck();
+        if (typeof initAnnounce    === 'function') initAnnounce();
+    }, 800);
 });

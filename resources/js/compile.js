@@ -1,9 +1,3 @@
-/**
- * 校验表单后将 Java 代码发送到后端编译服务器，成功后下载 JAR 文件
- * 依赖：constants.js (editors), form.js (validateMainClass, getMainClassParts),
- *        ui.js (showStatus, showModalDialog, switchTab)
- */
-
 function compilePlugin() {
     const btn = document.getElementById('compileBtn');
 
@@ -14,6 +8,9 @@ function compilePlugin() {
     const websiteVal     = document.getElementById('website')?.value?.trim()         || '';
     const groupIdVal     = document.getElementById('groupId')?.value?.trim()         || '';
     const artifactIdVal  = document.getElementById('artifactId')?.value?.trim()      || '';
+    const apiVersionVal  = document.getElementById('apiVersion')?.value?.trim()      || '1.21';
+    const spigotVerVal   = document.getElementById('spigotVersion')?.value?.trim()   || '1.21-R0.1-SNAPSHOT';
+    const javaVerVal     = document.getElementById('javaVersion')?.value?.trim()     || '21';
 
     // 校验插件名
     if (!pluginNameVal || !/^[a-zA-Z][a-zA-Z0-9_-]*$/.test(pluginNameVal)) {
@@ -48,7 +45,7 @@ function compilePlugin() {
     const pkg = pkgMatch   ? pkgMatch[1]   : getMainClassParts().pkg;
     const cls = classMatch ? classMatch[1] : getMainClassParts().cls;
 
-    // 90 秒超时(?)，或者超时时间更长一点？
+    // 90 秒超时
     const controller = new AbortController();
     const timeoutId  = setTimeout(() => controller.abort(), 90000);
 
@@ -57,19 +54,22 @@ function compilePlugin() {
         headers: { 'Content-Type': 'application/json' },
         signal: controller.signal,
         body: JSON.stringify({
-            pluginName:  pluginNameVal,
-            packageName: pkg,
-            mainClass:   cls,
-            fullMain:    pkg + '.' + cls,
-            version:     versionVal,
-            author:      authorVal,
-            website:     websiteVal,
-            groupId:     groupIdVal,
-            artifactId:  artifactIdVal,
-            javaCode:    code,
-            pluginYml:   editors.yml?.getValue() || "",
-            configYml:   editors.cfg?.getValue() || "",
-            pomXml:      editors.pom?.getValue() || ""
+            pluginName:    pluginNameVal,
+            packageName:   pkg,
+            mainClass:     cls,
+            fullMain:      pkg + '.' + cls,
+            version:       versionVal,
+            author:        authorVal,
+            website:       websiteVal,
+            groupId:       groupIdVal,
+            artifactId:    artifactIdVal,
+            apiVersion:    apiVersionVal,
+            spigotVersion: spigotVerVal,
+            javaVersion:   javaVerVal,
+            javaCode:      code,
+            pluginYml:     editors.yml?.getValue() || "",
+            configYml:     editors.cfg?.getValue() || "",
+            pomXml:        editors.pom?.getValue() || ""
         })
     })
     .then(async res => {
@@ -89,7 +89,7 @@ function compilePlugin() {
     })
     .catch(err => {
         if (err.name === 'AbortError') {
-            showModalDialog("编译超时", "编译请求超时（90秒），请检查后端服务或网络连接。", "error");
+            showModalDialog("编译超时", "编译请求超时（90秒），可能是依赖下载失败，请尝试开启加速器再试", "error");
         } else {
             showModalDialog("网络错误", "后端未启动或网络连接失败。", "error");
         }

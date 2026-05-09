@@ -1,8 +1,3 @@
-/**
- * 表单字段校验、实时同步、工具函数
- * 依赖：constants.js, codegen.js (regenerateAll)
- */
-
 //  工具函数 
 
 //  检查字符串是否为合法的 Java 标识符 

@@ -1,10 +1,3 @@
-/**
- * .mcbp 蓝图文件的导出与导入
- * 依赖：constants.js, codegen.js (regenerateAll), config-ui.js (renderConfigEntries),
- *        ui.js (switchTab, showStatus), form.js (onPluginNameInput, onMainClassInput)
- */
-
-
 //将当前节点图、表单配置、配置项打包为 .mcbp 蓝图文件并触发下载
 
 function exportBlueprint() {

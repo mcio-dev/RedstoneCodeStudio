@@ -1,11 +1,3 @@
-/**
- * 界面交互：标签页切换、模态弹窗、状态栏提示、节点面板过滤
- * 依赖：constants.js (litegraphCanvas, editors)
- */
-
-// 节点面板搜索
-
-
 // 按关键词过滤左侧节点面板
 function filterNodes(query) {
     const q = query.trim().toLowerCase();
@@ -40,6 +32,11 @@ function filterNodes(query) {
 // 切换到 logic 时自适应画布尺寸；切换到 source 时刷新 Ace 编辑器
 
 function switchTab(tab) {
+    if (tab === 'market' && typeof isOnlineMode === 'function' && !isOnlineMode()) {
+        if (typeof showOfflineMarketGuide === 'function') showOfflineMarketGuide();
+        else if (typeof showStatus === 'function') showStatus('离线模式下无法打开模板市场');
+        return;
+    }
     document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
     document.getElementById('tab-' + tab).classList.add('active');
     document.querySelectorAll('.view-section').forEach(v => v.classList.remove('active'));
@@ -53,6 +50,9 @@ function switchTab(tab) {
     }
     if (tab === 'source') {
         Object.values(editors).forEach(e => { if (e) e.resize(); });
+    }
+    if (tab === 'market') {
+        if (typeof marketInit === 'function') marketInit();
     }
 }
 
@@ -80,12 +80,6 @@ function showStatus(msg) {
 }
 
 // 模态弹窗
-
-
-// 显示自定义模态弹窗
-// @param {string} title   标题
-// @param {string} message 内容
-// @param {'success'|'error'|'info'} type 类型
 function showModalDialog(title, message, type = 'info') {
     const modal = document.getElementById('customModal');
     if (!modal) return;

@@ -1,8 +1,3 @@
-/**
- * 清空并重新注册所有 LiteGraph 节点类型
- * 依赖：constants.js（C, regenerateAll）
- */
-
 function registerAllNodes() {
     // 清空已注册节点
     for (const k of Object.keys(LiteGraph.registered_node_types)) {

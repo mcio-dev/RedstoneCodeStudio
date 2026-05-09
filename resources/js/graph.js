@@ -1,8 +1,3 @@
-/**
- * 初始化 LiteGraph 画布：注册节点、配置右键菜单、拖拽放置、自动代码生成
- * 依赖：constants.js, node-defs.js, codegen.js
- */
-
 function initLiteGraph() {
     if (typeof LiteGraph === 'undefined') { setTimeout(initLiteGraph, 100); return; }
 
@@ -33,7 +28,7 @@ function initLiteGraph() {
     lgc.background_image = null;
     lgc.clear_background_color = "#181b27";
 
-    // 中文分类名称映射（用于右键"添加节点"菜单）
+    // 中文分类名称映射
     const CN_CATEGORY = {
         "events":  "<i class=\"fa-regular fa-calendar\"></i> 事件节点",
         "command": "<i class=\"fa-solid fa-terminal\"></i> 指令节点",

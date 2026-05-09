@@ -1,7 +1,4 @@
-/**
- * 全局共享状态变量 + 节点颜色常量
- * 所有其他模块均可读写这些变量
- */
+const APP_VERSION = 20260509;
 
 // LiteGraph 画布与图实例
 let litegraphCanvas, litegraphGraph;
